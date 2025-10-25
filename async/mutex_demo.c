@@ -6,6 +6,18 @@
 // Compile: cc -o mutex_demo mutex_demo.c -pthread
 // Run: ./mutex_demo
 
+/*
+Easy simplifications with significant benefit
+Track a shared “available count” (incremented by the producer, decremented by consumers) 
+instead of calling any_available_locked() and rescanning the array; each consumer could 
+then grab work with a single pass or directly index into the batch, removing two O(n) 
+scans per claim.
+
+Introduce a condition variable for the collector that consumers signal when they flip an 
+entry to COL_NEW; the collector can then wait instead of spinning, drastically reducing 
+CPU usage and lock hold times while simplifying the control flow inside the loop
+*/
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -36,7 +48,6 @@ static pthread_mutex_t prod_cons_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t prod_cons_cond   = PTHREAD_COND_INITIALIZER;
 static int batch_remaining = 0;     // how many items in current batch remain unclaimed
 static bool terminate_consumers = false;
-static bool all_produced = false;
 
 /* Collector synchronization */
 static pthread_mutex_t collector_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -83,7 +94,6 @@ void *c_producer_thread(void *arg) {
 
     // all batches produced, tell consumers to terminate
     pthread_mutex_lock(&prod_cons_mutex);
-    all_produced = true;
     terminate_consumers = true;
     pthread_cond_broadcast(&prod_cons_cond); // wake any waiting consumers
     pthread_mutex_unlock(&prod_cons_mutex);
@@ -186,6 +196,7 @@ void *collector_thread(void *arg) {
     int consumer_counts[N_CONSUMERS] = {0};       // number of chunks processed per consumer
 
     while (1) {
+    	usleep(100);
         pthread_mutex_lock(&collector_mutex);
         int done_count = 0;
 
@@ -213,7 +224,7 @@ void *collector_thread(void *arg) {
             for (int c = 0; c < N_CONSUMERS; ++c) {
                 printf("Consumer #%d: chunks=%3d total checksum=%llu  avg checksum=%llu\n", 
                         c, consumer_counts[c], (unsigned long long)consumer_totals[c],
-                        (unsigned long long)(consumer_totals[c] / consumer_counts[c]));
+                        consumer_counts[c]>0 ? (unsigned long long)(consumer_totals[c] / consumer_counts[c]) : 0);
             }
 
             pthread_mutex_unlock(&collector_mutex);
