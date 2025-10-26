@@ -1,8 +1,10 @@
+#define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <getopt.h>
 #include <stdbool.h>
+#include <errno.h>
 
 #define MAX_PATTERN_LEN 32
 #define MAX_OPERANDS 256
@@ -58,16 +60,18 @@ void free_options(Options *opts) {
 }
 
 Options* parse_options(int argc, char *argv[]) {
+
+	// Create opts structure and set any non-zero defaults
     Options *opts = calloc(1, sizeof(Options));
     if (!opts) {
         fprintf(stderr, "Error: Memory allocation failed\n");
         exit(EXIT_FAILURE);
     }
-    
     // Initialize NON-ZERO defaults (calloc sets all to 0)
     opts->depth = MAX_DEPTH; // set default for if depth option not specified
     
-    static struct option long_options[] = {
+    // set long options
+    struct option long_options[] = {
         {"help",    no_argument,       0, 'h'},
         {"depth",   required_argument, 0, 'd'},
         {"iterate", no_argument,       0, 'i'},
@@ -77,10 +81,11 @@ Options* parse_options(int argc, char *argv[]) {
         {"woo", 	no_argument, 	   0, 1234}, // 1234 in place of a short option
         {0, 0, 0, 0}
     };
-    static char short_options[] = "hd:ip:e:v"; // nothing here for woo as no short option
+    //set short options
+    char short_options[] = "hd:ip:e:v"; // nothing here for --woo as no short option
     
-    int opt;
-    int option_index = 0;
+    int opt; // iterator as we parse the options
+    int option_index = 0; // used by getopt_long - ignored by us unless we want to know which option is being processed
     
     while ((opt = getopt_long(argc, argv, short_options, long_options, &option_index)) != -1) {
         switch (opt) {
@@ -90,14 +95,25 @@ Options* parse_options(int argc, char *argv[]) {
                 free_options(opts);
                 exit(EXIT_SUCCESS);
                 
-            case 'd':
-                opts->depth = atoi(optarg);
-                if (opts->depth < 1 || opts->depth > 6) {
-                    fprintf(stderr, "Error: depth must be between 1 and 6 (got %d)\n", opts->depth);
-                    free_options(opts);
-                    exit(EXIT_FAILURE);
-                }
-                break;
+			case 'd': {
+				char *end = NULL;
+				errno = 0;
+				long parsed = strtol(optarg, &end, 10);
+			
+				if (errno != 0 || end == optarg || *end != '\0') {
+					fprintf(stderr, "Error: depth must be a whole number (got \"%s\")\n", optarg);
+					free_options(opts);
+					exit(EXIT_FAILURE);
+				}
+				if (parsed < 1 || parsed > MAX_DEPTH) {
+					fprintf(stderr, "Error: depth must be between 1 and %d (got %ld)\n", MAX_DEPTH, parsed);
+					free_options(opts);
+					exit(EXIT_FAILURE);
+				}
+			
+				opts->depth = (int)parsed;
+				break;
+			}
                 
             case 'i':
                 opts->iterate = true;
@@ -109,32 +125,44 @@ Options* parse_options(int argc, char *argv[]) {
                     free_options(opts);
                     exit(EXIT_FAILURE);
                 }
-                strncpy(opts->pattern, optarg, MAX_PATTERN_LEN);
+                 if (optarg == NULL || optarg[0] == '\0') {
+                    fprintf(stderr, "Error: pattern can not be empty\n");
+                    free_options(opts);
+                    exit(EXIT_FAILURE);
+                }
+               strncpy(opts->pattern, optarg, MAX_PATTERN_LEN);
                 opts->pattern[MAX_PATTERN_LEN] = '\0';
                 break;
                 
-            case 'e':
-                // Reallocate the excludes array to add one more entry
-                {
-                    char **new_excludes = realloc(opts->excludes, 
-                                                  (opts->exclude_count + 1) * sizeof(char*));
-                    if (!new_excludes) {
-                        fprintf(stderr, "Error: Memory allocation failed for excludes\n");
-                        free_options(opts);
-                        exit(EXIT_FAILURE);
-                    }
-                    opts->excludes = new_excludes;
-                    
-                    // Duplicate the exclude string
-                    opts->excludes[opts->exclude_count] = strdup(optarg);
-                    if (!opts->excludes[opts->exclude_count]) {
-                        fprintf(stderr, "Error: Memory allocation failed for exclude string\n");
-                        free_options(opts);
-                        exit(EXIT_FAILURE);
-                    }
-                    opts->exclude_count++;
-                }
-                break;
+			case 'e': {
+				// Reject empty exclude strings
+				if (optarg == NULL || optarg[0] == '\0') {
+					fprintf(stderr, "Error: exclude cannot be empty\n");
+					free_options(opts);
+					exit(EXIT_FAILURE);
+				}
+			
+				// Reallocate the excludes array to add one more entry
+				char **new_excludes = realloc(opts->excludes,
+											  (opts->exclude_count + 1) * sizeof(char *));
+				if (!new_excludes) {
+					fprintf(stderr, "Error: Memory allocation failed for excludes\n");
+					free_options(opts);
+					exit(EXIT_FAILURE);
+				}
+				opts->excludes = new_excludes;
+			
+				// Duplicate the exclude string
+				opts->excludes[opts->exclude_count] = strdup(optarg);
+				if (!opts->excludes[opts->exclude_count]) {
+					fprintf(stderr, "Error: Memory allocation failed for exclude string\n");
+					free_options(opts);
+					exit(EXIT_FAILURE);
+				}
+			
+				opts->exclude_count++;
+				break;
+			}
                 
             case 'v':
                 opts->verbose = true;
@@ -145,7 +173,7 @@ Options* parse_options(int argc, char *argv[]) {
                 break;
                 
             case '?':
-                // getopt_long already printed an error message 
+            	// we only get here if getopt_long has already found an error and printed error message
                 free_options(opts);
                 exit(EXIT_FAILURE);
                 
@@ -156,9 +184,18 @@ Options* parse_options(int argc, char *argv[]) {
         }
     }
     
-    // Collect operands
+	// optind tells us where the first non-option argument is (i.e., the first operand)
+	// If there are no operands, optind == argc
     opts->operand_count = argc - optind;
+	// NOTE: getopt_long re-orders argv so that options come first, operands at end:
+	//    demo -d 1 *.c --exclude "fred" *h --woo
+	// is reordered to:
+	//    demo -d 1 --exclude "fred" --woo *.c *.h
+	// So optind would be 6, pointing to *.c at argv[6], even though 
+	// *.c was originally at argv[3] on the command line
+
     
+    // Collect operands
     if (opts->operand_count < 1) {
         fprintf(stderr, "Error: at least one FILE operand is required\n");
         print_usage(argv[0]);
