@@ -15,15 +15,17 @@
 #include "long_opt.h"
 
 // internal function prototypes
-static void print_help(Options *opts, const char *prog_name, const char *default_operand);
+static void print_help(Options *opts, const char *prog_name, const char *const default_operand);
 static void print_version(Options *opts, const char *prog_name);
 static void free_string_array(char **array, int count);
 static void validate_option_int(Options *opts, const char *arg, const char *error_name,int *arg_value, int opt_min, int opt_max);
 static void validate_option_simple_string(Options *opts, const char *arg, const char *error_name, char **arg_value, bool can_be_empty, int max_length);
 static void validate_option_repeated_string(Options *opts, const char *arg, const char *error_name, char ***arg_array, int *array_len,bool can_be_empty, int max_length);
-static void parse_options_basic_validation(Options *opts, int argc, char *argv[], const char *default_operand);
+static void parse_options_basic_validation(Options *opts, int argc, char *argv[], const char *const default_operand);
 static void parse_options_complex_validation(Options *opts);
-static void parse_options_collate_operands(Options *opts, int argc, char *argv[], const char *default_operand);
+static void parse_options_collate_operands(Options *opts, int argc, char *argv[], const char *const default_operand);
+static void clean_up_and_exit(Options* opts, int exit_code);
+
 
 // ===============================
 // Option definitions 
@@ -48,7 +50,7 @@ static struct option long_options[] = {
 const char short_options[] = "hvq:d:ip:e:V"; // nothing here for --woo as no short option
   
 // ============ HELP FUNCTION ===================
-static void print_help(Options* opts, const char *prog_name, const char*default_operand) {
+static void print_help(Options* opts, const char *prog_name, const char *const default_operand) {
     printf("Usage: %s [OPTIONS] FILE...\n", prog_name);
     printf("\nOptions:\n");
     printf("  -h, --help              Show this help message and exit\n");
@@ -61,16 +63,15 @@ static void print_help(Options* opts, const char *prog_name, const char*default_
     printf("  -V                      verbose (example with no long option)\n");
     printf("      --woo               Enable WOO! mode (example with no short option)\n");
 	if(default_operand) {
-		printf("\nIf no FILE operand is specified, %s will be default.\n", default_operand);
+		printf("\nIf no FILE operand is specified, \"%s\" will be default.\n", default_operand);
 	} else {
     	printf("\nAt least one FILE operand is required.\n");
 	}
-	free_options(opts);
-	exit(EXIT_SUCCESS);
+	clean_up_and_exit(opts, EXIT_SUCCESS);
 }
 
 // ============ BASIC OPTION PARSING ===============
-static void parse_options_basic_validation(Options* opts, int argc, char *argv[], const char*default_operand) {
+static void parse_options_basic_validation(Options* opts, int argc, char *argv[], const char *const default_operand) {
     int opt, option_index = 0; 
 
     // Initialize any NON-ZERO defaults (initial option calloc sets everything to 0 / NULL)
@@ -112,13 +113,11 @@ static void parse_options_basic_validation(Options* opts, int argc, char *argv[]
 			// ------ standard handler options --------
             case '?':
             	// we only get here if getopt_long has already found an error and printed error message
-                free_options(opts);
-                exit(EXIT_FAILURE);
+                clean_up_and_exit(opts, EXIT_FAILURE);
             default:
             	// only way here is if we've messed up coding - e.g. have a -x option and no handler for it
    				fprintf(stderr, "Internal error: unexpected getopt_long return value: %d\n", opt);
-                free_options(opts);
-                exit(EXIT_FAILURE);
+                clean_up_and_exit(opts, EXIT_FAILURE);
         }
     }
 }
@@ -128,8 +127,7 @@ static void parse_options_complex_validation(Options* opts){
     // example of mandatory option: check quiet - it's a mandatory option, so if not set then an error
      if (opts->quiet == 0) {
         fprintf(stderr, "Error: -q / --quiet MUST be set (use -h for help)\n");
-        free_options(opts);
-        exit(EXIT_FAILURE);
+		clean_up_and_exit(opts, EXIT_FAILURE);
     }
 	// if we had -start and -end and need both or neither, the logic for that would be here	
 	// and so on..
@@ -140,14 +138,18 @@ static void parse_options_complex_validation(Options* opts){
 static void print_version(Options* opts, const char *prog_name) {
 	// If you want to hard code the programme name, add the line (void)prog_name; to stop compiler warnings
     printf("%s version: %s\n", prog_name, PROG_VERSION);
-	free_options(opts);
-	exit(EXIT_SUCCESS);
+	clean_up_and_exit(opts, EXIT_SUCCESS);
 }
 
 
 // ===============================
 // Other helper Functions (shouldn't need editing unless adding new functionality)
 // ===============================
+
+static void clean_up_and_exit(Options* opts, int exit_code){
+	free_options(opts);
+	exit(exit_code);
+}
 
 static void free_string_array(char **array, int count) {
     if (array) {
@@ -167,14 +169,12 @@ static void validate_option_int(Options* opts, const char* arg, const char* erro
 
 	if (errno != 0 || end == arg || *end != '\0') {
 		fprintf(stderr, "Error: %s must be a whole number (got \"%s\")\n", error_name, arg);
-		free_options(opts);
-		exit(EXIT_FAILURE);
+		clean_up_and_exit(opts, EXIT_FAILURE);
 	}
 	
 	if (parsed < opt_min || parsed > opt_max) {
 		fprintf(stderr, "Error: %s must be between %d and %d (got %ld)\n", error_name, opt_min, opt_max, parsed);
-		free_options(opts);
-		exit(EXIT_FAILURE);
+		clean_up_and_exit(opts, EXIT_FAILURE);
 	}
 
 	*arg_value = (int)parsed;
@@ -186,33 +186,28 @@ static void validate_option_simple_string(Options* opts, const char* arg, const 
 	// this first should never trigger but guards for next check
     if (arg == NULL) {
         fprintf(stderr, "Error: %s missing argument\n", error_name);
-        free_options(opts);
-        exit(EXIT_FAILURE);
+		clean_up_and_exit(opts, EXIT_FAILURE);
     }
 	// reject if this string is already allocated
 	if (*arg_value != NULL) {
 		fprintf(stderr, "Error: %s specified more than once\n", error_name);
-		free_options(opts);
-		exit(EXIT_FAILURE);
+		clean_up_and_exit(opts, EXIT_FAILURE);
 	}	
  	// Check/Reject empty pattern string 
 	if (!can_be_empty && arg[0] == '\0') {
 		fprintf(stderr, "Error: %s can not be empty\n", error_name);
-		free_options(opts);
-		exit(EXIT_FAILURE);
+		clean_up_and_exit(opts, EXIT_FAILURE);
 	}
 	// reject too long pattern
 	if (max_length > 0 && (int)strlen(arg) > max_length) {
 		fprintf(stderr, "Error: %s exceeds maximum length of %d characters\n", error_name, max_length);
-		free_options(opts);
-		exit(EXIT_FAILURE);
+		clean_up_and_exit(opts, EXIT_FAILURE);
 	}
 	// otherwise copy the argument
 	*arg_value = strdup(arg);
 	if (!(*arg_value)) {
 		fprintf(stderr, "Error: Memory allocation failed for %s string\n", error_name);
-		free_options(opts);
-		exit(EXIT_FAILURE);
+		clean_up_and_exit(opts, EXIT_FAILURE);
 	}
 }
 
@@ -222,8 +217,7 @@ static void validate_option_repeated_string(Options *opts, const char *arg, cons
     char **new_array = realloc(*arg_array, (size_t)(*array_len + 1) * sizeof(char *));
     if (!new_array) {
         fprintf(stderr, "Error: Memory allocation failed for %s array\n", error_name);
-        free_options(opts);
-        exit(EXIT_FAILURE);
+		clean_up_and_exit(opts, EXIT_FAILURE);
     }
     *arg_array = new_array;
     (*arg_array)[*array_len] = NULL; // important, so call to val_simple_string doesn't think it's a duplicate
@@ -234,7 +228,7 @@ static void validate_option_repeated_string(Options *opts, const char *arg, cons
     (*array_len)++;
 }
 
-static void parse_options_collate_operands(Options *opts, int argc, char *argv[], const char *default_operand){
+static void parse_options_collate_operands(Options *opts, int argc, char *argv[], const char *const default_operand){
 	// optind tells us where the first non-option argument is (i.e., the first operand)
 	// NOTE: getopt_long re-orders argv so that options come first, operands at end:
 	//    demo -d 1 *.c --exclude "fred" *h --woo
@@ -249,15 +243,13 @@ static void parse_options_collate_operands(Options *opts, int argc, char *argv[]
     // Collect operands    
     if (opts->operand_count > MAX_OPERANDS) {
         fprintf(stderr, "Error: too many operands (max %d)\n", MAX_OPERANDS);
-        free_options(opts);
-        exit(EXIT_FAILURE);
+		clean_up_and_exit(opts, EXIT_FAILURE);
     }
 	
 	// fail if there's nothing after the options AND no default has been specified
     if (opts->operand_count == 0 && default_operand == NULL) {
         fprintf(stderr, "Error: at least one FILE operand is required (use -h for help)\n");
-        free_options(opts);
-        exit(EXIT_FAILURE);
+		clean_up_and_exit(opts, EXIT_FAILURE);
     }
 	
 	// flag to use the default if there's no target specified 
@@ -270,19 +262,17 @@ static void parse_options_collate_operands(Options *opts, int argc, char *argv[]
     opts->operands = malloc((size_t)opts->operand_count * sizeof(char*));
     if (!opts->operands) {
         fprintf(stderr, "Error: Memory allocation failed\n");
-        free_options(opts);
-        exit(EXIT_FAILURE);
+		clean_up_and_exit(opts, EXIT_FAILURE);
     }
     
     for (int i = 0; i < opts->operand_count; i++) {
         opts->operands[i] = strdup(use_default ? default_operand : argv[optind + i]);
         if (!opts->operands[i]) {
             fprintf(stderr, "Error: Memory allocation failed\n");
-            // Clean up already allocated operands - partial cleanup before calling free_options
-            // We need to set operand_count to i so free_options knows how many to free
+            // We up already allocated operands - partial cleanup before calling clean_up_and_exit
+            // We need to set operand_count to i so clean_up_and_exit / free_options knows how many to free
             opts->operand_count = i;
-            free_options(opts);
-            exit(EXIT_FAILURE);
+			clean_up_and_exit(opts, EXIT_FAILURE);
         }
     }
 }
@@ -291,12 +281,12 @@ static void parse_options_collate_operands(Options *opts, int argc, char *argv[]
 // Public API functions
 // ===============================
 
-Options* parse_options(int argc, char *argv[], const char *default_operand) {
+Options* parse_options(int argc, char *argv[], const char *const default_operand) {
 	// Create opts structure using calloc to set ALL to a default of zero or NULL
     Options *opts = calloc(1, sizeof(Options));
     if (!opts) {
         fprintf(stderr, "Error: Memory allocation failed\n");
-        exit(EXIT_FAILURE);
+			clean_up_and_exit(NULL, EXIT_FAILURE);
     }
     
     // do the first pass of options just to get the values passed & complete basic validataion
@@ -330,8 +320,8 @@ void free_options(Options *opts) {
 #ifdef DEMO
 
 int main(int argc, char *argv[]) {
-//    Options *opts = parse_options(argc, argv, ".");		  //set a default operand
-    Options *opts = parse_options(argc, argv, NULL); 	  // no default operand
+    Options *opts = parse_options(argc, argv, ".");		  //set a default operand
+//    Options *opts = parse_options(argc, argv, NULL); 	  // no default operand
     
     // Print parsed options
     printf("Parsed Options:\n");
