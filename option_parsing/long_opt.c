@@ -189,6 +189,12 @@ static void validate_option_simple_string(Options* opts, const char* arg, const 
         free_options(opts);
         exit(EXIT_FAILURE);
     }
+	// reject if this string is already allocated
+	if (*arg_value != NULL) {
+		fprintf(stderr, "Error: %s specified more than once\n", error_name);
+		free_options(opts);
+		exit(EXIT_FAILURE);
+	}	
  	// Check/Reject empty pattern string 
 	if (!can_be_empty && arg[0] == '\0') {
 		fprintf(stderr, "Error: %s can not be empty\n", error_name);
@@ -220,6 +226,7 @@ static void validate_option_repeated_string(Options *opts, const char *arg, cons
         exit(EXIT_FAILURE);
     }
     *arg_array = new_array;
+    (*arg_array)[*array_len] = NULL; // important, so call to val_simple_string doesn't think it's a duplicate
 
     // Reuse the existing single-string validator to check and strdup
     validate_option_simple_string(opts, arg, error_name, &((*arg_array)[*array_len]), can_be_empty, max_length);
