@@ -1,0 +1,230 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#define MAX_STRING_LENGTH 32
+
+typedef struct {
+    char **buffer;      // Array of string pointers
+    int capacity;       // Maximum number of items
+    int count;          // Current number of items
+    int head;           // Index of oldest item (read position)
+    int tail;           // Index where next item will be written
+} CircularBuffer;
+
+static CircularBuffer cb = {0};
+
+// Setup the circular buffer with specified capacity
+int setup(int size) {
+    if (size <= 0) {
+        fprintf(stderr, "Error: Buffer size must be positive\n");
+        return -1;
+    }
+    
+    // Allocate array of string pointers
+    cb.buffer = (char **)malloc(size * sizeof(char *));
+    if (cb.buffer == NULL) {
+        fprintf(stderr, "Error: Memory allocation failed\n");
+        return -1;
+    }
+    
+    // Allocate each string slot
+    for (int i = 0; i < size; i++) {
+        cb.buffer[i] = (char *)malloc((MAX_STRING_LENGTH + 1) * sizeof(char));
+        if (cb.buffer[i] == NULL) {
+            // Clean up on failure
+            for (int j = 0; j < i; j++) {
+                free(cb.buffer[j]);
+            }
+            free(cb.buffer);
+            fprintf(stderr, "Error: Memory allocation failed\n");
+            return -1;
+        }
+        cb.buffer[i][0] = '\0'; // Initialize to empty string
+    }
+    
+    cb.capacity = size;
+    cb.count = 0;
+    cb.head = 0;
+    cb.tail = 0;
+    
+    return 0;
+}
+
+// Push a new item into the buffer (at tail position)
+void push(const char *str) {
+    if (cb.buffer == NULL) {
+        fprintf(stderr, "Error: Buffer not initialized\n");
+        return;
+    }
+    
+    // Copy string, truncating if necessary
+    strncpy(cb.buffer[cb.tail], str, MAX_STRING_LENGTH);
+    cb.buffer[cb.tail][MAX_STRING_LENGTH] = '\0'; // Ensure null termination
+    
+    // Move tail forward
+    cb.tail = (cb.tail + 1) % cb.capacity;
+    
+    // If buffer was full, we overwrote the oldest item, so move head forward
+    if (cb.count == cb.capacity) {
+        cb.head = (cb.head + 1) % cb.capacity;
+    } else {
+        cb.count++;
+    }
+}
+
+// Pop the oldest item from the buffer (at head position)
+// Returns NULL if buffer is empty
+// Caller should NOT free the returned pointer
+char *pop(void) {
+    if (cb.buffer == NULL) {
+        fprintf(stderr, "Error: Buffer not initialized\n");
+        return NULL;
+    }
+    
+    if (cb.count == 0) {
+        return NULL; // Buffer is empty
+    }
+    
+    // Get the string at head position
+    static char result[MAX_STRING_LENGTH + 1];
+    strcpy(result, cb.buffer[cb.head]);
+    
+    // Clear the slot
+    cb.buffer[cb.head][0] = '\0';
+    
+    // Move head forward
+    cb.head = (cb.head + 1) % cb.capacity;
+    cb.count--;
+    
+    return result;
+}
+
+// Get the current number of items in the buffer
+int get_count(void) {
+    return cb.count;
+}
+
+// Get the maximum capacity of the buffer
+int get_capacity(void) {
+    return cb.capacity;
+}
+
+// Clear all items from the buffer
+void clear(void) {
+    if (cb.buffer == NULL) {
+        return;
+    }
+    
+    for (int i = 0; i < cb.capacity; i++) {
+        cb.buffer[i][0] = '\0';
+    }
+    
+    cb.count = 0;
+    cb.head = 0;
+    cb.tail = 0;
+}
+
+// Cleanup and free all allocated memory
+void cleanup(void) {
+    if (cb.buffer == NULL) {
+        return;
+    }
+    
+    for (int i = 0; i < cb.capacity; i++) {
+        free(cb.buffer[i]);
+    }
+    free(cb.buffer);
+    
+    cb.buffer = NULL;
+    cb.capacity = 0;
+    cb.count = 0;
+    cb.head = 0;
+    cb.tail = 0;
+}
+
+// Demo function to show buffer contents (for debugging)
+void print_buffer_state(void) {
+    printf("Buffer state: count=%d, capacity=%d, head=%d, tail=%d\n", 
+           cb.count, cb.capacity, cb.head, cb.tail);
+    printf("Contents: ");
+    if (cb.count == 0) {
+        printf("(empty)\n");
+    } else {
+        printf("[");
+        int idx = cb.head;
+        for (int i = 0; i < cb.count; i++) {
+            printf("\"%s\"", cb.buffer[idx]);
+            if (i < cb.count - 1) printf(", ");
+            idx = (idx + 1) % cb.capacity;
+        }
+        printf("]\n");
+    }
+}
+
+int main(void) {
+    printf("=== Circular Buffer Demo ===\n\n");
+    
+    // Setup buffer with capacity of 3
+    if (setup(3) != 0) {
+        return 1;
+    }
+    printf("Created buffer with capacity 3\n\n");
+    
+    // Test the scenario from your question
+    printf("Pushing: Alice, Bob, Charlie, Dave\n");
+    push("Alice");
+    print_buffer_state();
+    
+    push("Bob");
+    print_buffer_state();
+    
+    push("Charlie");
+    print_buffer_state();
+    
+    push("Dave"); // This will overwrite Alice
+    print_buffer_state();
+    
+    printf("\nPopping oldest item:\n");
+    char *item = pop();
+    if (item) {
+        printf("Popped: \"%s\"\n", item);
+    }
+    print_buffer_state();
+    
+    // Pop remaining items
+    printf("\nPopping remaining items:\n");
+    while ((item = pop()) != NULL) {
+        printf("Popped: \"%s\"\n", item);
+        print_buffer_state();
+    }
+    
+    // Test pop on empty buffer
+    printf("\nTrying to pop from empty buffer:\n");
+    item = pop();
+    if (item == NULL) {
+        printf("Returned NULL (buffer is empty)\n");
+    }
+    
+    // Test clear function
+    printf("\n=== Testing clear function ===\n");
+    push("One");
+    push("Two");
+    push("Three");
+    print_buffer_state();
+    clear();
+    printf("After clear():\n");
+    print_buffer_state();
+    
+    // Test string truncation
+    printf("\n=== Testing string truncation ===\n");
+    push("This is a very long string that exceeds 32 characters and should be truncated");
+    item = pop();
+    printf("Popped (truncated): \"%s\" (length: %zu)\n", item, strlen(item));
+    
+    // Cleanup
+    cleanup();
+    printf("\nBuffer cleaned up successfully\n");
+    
+    return 0;
+}
