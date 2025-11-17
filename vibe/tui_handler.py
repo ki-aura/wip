@@ -230,13 +230,13 @@ def handle_keypress(key: int, state: EditorState) -> str:
 
     # --- Command Handling ---
     
-    # Quit Command (Ctrl+W)
+    # SAVE Command (Ctrl+W)
     if key == 23: # 23 is Ctrl+W
-        return 'QUIT' 
-    
-    # Save Command (Ctrl+S) - THIS IS KEY
-    if key == 24: # 24 is Ctrl+X
         return 'SAVE' 
+    
+    # QUIT Command (Ctrl+X) 
+    if key == 24: # 24 is Ctrl+X
+        return 'QUIT' 
 
     # Mode Toggle (Tab key)
     if key == ord('\t'):
