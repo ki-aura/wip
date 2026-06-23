@@ -213,7 +213,8 @@ int main(void)
 		printf("Returned NULL (buffer is empty)\n");
 	}
 	// Test clear function
-	printf("\n=== Testing clear function ===\n");
+	printf("\n=== Testing clear function ===\n"
+		"Pushing One, Two Three\n");
 	push("One");
 	push("Two");
 	push("Three");

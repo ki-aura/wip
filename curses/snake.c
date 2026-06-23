@@ -4,10 +4,11 @@
 #include <unistd.h>
 #include <ncurses.h>
 
-#define MAX_TASKS 10
 #define BOARD_W 20
 #define BOARD_H 10
-#define MAX_SNAKE 100
+// Tied maximum capacity directly to the grid area to ensure the win condition is reachable
+#define MAX_SNAKE (BOARD_W * BOARD_H)
+#define MAX_TASKS 10
 
 typedef void (*task_cb)(void);
 
@@ -28,11 +29,16 @@ Point snake[MAX_SNAKE];
 int snake_len = 3;
 int grow_snake = 0;
 
-Point food;
+// Initialize food safely off-board to prevent uninitialized matrix writes
+Point food = {-1, -1};
 
 // Direction: 0=up,1=right,2=down,3=left
 int dir = 1;
 int next_dir = 1;
+
+// Grid Matrix State for O(1) Lookups
+typedef enum { EMPTY, SNAKE_SEGMENT, FOOD_CELL } CellType;
+CellType board[BOARD_H][BOARD_W];
 
 // ------------------- Task system --------------------
 void timespec_add_ms(struct timespec *t, int ms) {
@@ -60,64 +66,53 @@ void add_task(task_cb cb, int interval_ms) {
 }
 
 // ------------------- Snake tasks ---------------------
-/*
-Yes — that nested loop is O(BOARD_W × BOARD_H × snake_len), which is inefficient, especially as the snake grows.
-A few ways to improve:
-Draw only what's changed
-Instead of redrawing the whole board every frame, update only the cells that changed (snake head, old tail, new food).
-Complexity drops to O(changes) per frame.
-Use a 2D array (board matrix)
-Maintain a char board[BOARD_H][BOARD_W] where each cell stores EMPTY, SNAKE, FOOD.
-Drawing becomes a simple O(BOARD_W × BOARD_H) pass without checking the snake array for each cell.
-Updating snake positions involves updating the board array at the old tail and new head.
-Use a hash / set for snake positions
-Store snake positions in a hash_set (or bitmap if BOARD_W × BOARD_H is small).
-Then checking if a cell contains a snake is O(1) instead of looping through the snake array.
-
-*/
 void draw_board() {
     clear();
     for (int y = 0; y < BOARD_H; y++) {
         for (int x = 0; x < BOARD_W; x++) {
-            int printed = 0;
-            for (int i = 0; i < snake_len; i++) {
-                if (snake[i].x == x && snake[i].y == y) {
-                    mvprintw(y, x, "O");
-                    printed = 1;
+            // Optimized character rendering using mvaddch instead of mvprintw
+            switch (board[y][x]) {
+                case SNAKE_SEGMENT:
+                    mvaddch(y, x, 'O');
                     break;
-                }
+                case FOOD_CELL:
+                    mvaddch(y, x, 'F');
+                    break;
+                default:
+                    mvaddch(y, x, '.');
+                    break;
             }
-            if (food.x == x && food.y == y) {
-                mvprintw(y, x, "F");
-                printed = 1;
-            }
-            if (!printed)
-                mvprintw(y, x, ".");
         }
     }
     refresh();
 }
 
 void spawn_food() {
+    // Only wipe the old food cell if it resides within legal coordinates
+    if (food.x >= 0 && food.x < BOARD_W && food.y >= 0 && food.y < BOARD_H) {
+        board[food.y][food.x] = EMPTY;
+    }
+
+    // Win condition check now functions correctly with the adjusted MAX_SNAKE macro
+    if (snake_len >= BOARD_W * BOARD_H) {
+        endwin();
+        printf("Victory! You successfully filled the entire board!\n");
+        exit(0);
+    }
+
     int x, y;
-    int collision;
     do {
         x = rand() % BOARD_W;
         y = rand() % BOARD_H;
-        collision = 0;
-        for (int i = 0; i < snake_len; i++) {
-            if (snake[i].x == x && snake[i].y == y) {
-                collision = 1;
-                break;
-            }
-        }
-    } while (collision);
+    } while (board[y][x] != EMPTY); // O(1) collision check
+
     food.x = x;
     food.y = y;
+    board[y][x] = FOOD_CELL;
 }
 
 void move_snake() {
-    dir = next_dir; // apply queued direction change
+    dir = next_dir; 
 
     Point new_head = snake[0];
     switch (dir) {
@@ -127,72 +122,108 @@ void move_snake() {
         case 3: new_head.x--; break;
     }
 
-    // wrap around edges
+    // Wrap around edges
     if (new_head.x < 0) new_head.x = BOARD_W - 1;
     if (new_head.x >= BOARD_W) new_head.x = 0;
     if (new_head.y < 0) new_head.y = BOARD_H - 1;
     if (new_head.y >= BOARD_H) new_head.y = 0;
 
-    // check collision with self
-    for (int i = 0; i < snake_len; i++) {
-        if (snake[i].x == new_head.x && snake[i].y == new_head.y) {
+    // Check if food was consumed
+    int eating = (new_head.x == food.x && new_head.y == food.y);
+    
+    // Explicit growth boundary evaluation (Fixes ghost segment matrix leak)
+    int will_grow = (eating || grow_snake > 0) && (snake_len < MAX_SNAKE);
+
+    // Self-collision tracking via the grid matrix
+    if (board[new_head.y][new_head.x] == SNAKE_SEGMENT) {
+        // Safe tail tip exemption logic only valid when not expanding
+        int is_tail_tip = (new_head.x == snake[snake_len - 1].x && new_head.y == snake[snake_len - 1].y);
+        
+        if (will_grow || !is_tail_tip) {
             endwin();
             printf("Game Over! Snake collided with itself.\n");
             exit(0);
         }
     }
 
-    // move body
-    for (int i = snake_len; i > 0; i--) {
-        snake[i] = snake[i-1];
+    // Clean old tail out if not physically expanding size this frame
+    if (!will_grow) {
+        board[snake[snake_len - 1].y][snake[snake_len - 1].x] = EMPTY;
+    }
+
+    // Shift body segments securely
+    int shift_limit = (snake_len < MAX_SNAKE) ? snake_len : (MAX_SNAKE - 1);
+    for (int i = shift_limit; i > 0; i--) {
+        snake[i] = snake[i - 1];
     }
     snake[0] = new_head;
+    board[new_head.y][new_head.x] = SNAKE_SEGMENT;
 
-    // eat food
-    if (new_head.x == food.x && new_head.y == food.y) {
-        snake_len--;
+    if (eating) {
+        grow_snake++; 
         spawn_food();
     }
 
     if (grow_snake > 0) {
-        snake_len++;
-        grow_snake--;
-    } else if (snake_len > MAX_SNAKE) {
-        snake_len = MAX_SNAKE;
+        if (snake_len < MAX_SNAKE) {
+            snake_len++;
+        }
+        grow_snake--; // Always consume counter down to match matrix state updates
     }
 
     draw_board();
 }
 
 void snake_grow() {
-    grow_snake++;
+    // Only accumulate counter if beneath absolute max capacity limits
+    if (snake_len + grow_snake < MAX_SNAKE) {
+        grow_snake++;
+    }
 }
 
 // ------------------- Main ---------------------------
 int main() {
-    srand(time(NULL));
+    // High-resolution seeding using nanoseconds to ensure unique runs
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    srand((unsigned int)(ts.tv_nsec ^ ts.tv_sec));
+
     initscr();
     noecho();
     cbreak();
     nodelay(stdscr, TRUE);
     keypad(stdscr, TRUE);
 
-    // initial snake
+    // Initialize blank board array state
+    for (int y = 0; y < BOARD_H; y++) {
+        for (int x = 0; x < BOARD_W; x++) {
+            board[y][x] = EMPTY;
+        }
+    }
+
+    // Construct starting snake configuration
     for (int i = 0; i < snake_len; i++) {
         snake[i].x = 2 - i;
         snake[i].y = 0;
+        board[snake[i].y][snake[i].x] = SNAKE_SEGMENT;
     }
 
     spawn_food();
 
-    add_task(move_snake, 200);  // move every 200ms
-    add_task(snake_grow, 5000); // grow every 5s
-    add_task(spawn_food, 10000); // optional: respawn food periodically if desired
+    add_task(move_snake, 200);   // Move updates every 200ms
+    add_task(snake_grow, 5000);  // Environmental passive growth every 5s
+
+    // Guard against empty-scheduler execution crashes
+    if (task_count == 0) {
+        endwin();
+        return 1;
+    }
 
     while (1) {
         struct timespec now;
         clock_gettime(CLOCK_MONOTONIC, &now);
 
+        // Frame skipping approach to due tasks (prevents massive burst teleports)
         for (int i = 0; i < task_count; i++) {
             Task *t = &tasks[i];
             if (timespec_cmp(&now, &t->next_run) >= 0) {
@@ -201,19 +232,41 @@ int main() {
             }
         }
 
-        // keyboard input
+        // Process keyboard input
         int ch = getch();
+        // Validate inputs against next_dir to cleanly resolve double-tap crashes
         switch(ch) {
-            case KEY_UP:    if (dir != 2) next_dir = 0; break;
-            case KEY_RIGHT: if (dir != 3) next_dir = 1; break;
-            case KEY_DOWN:  if (dir != 0) next_dir = 2; break;
-            case KEY_LEFT:  if (dir != 1) next_dir = 3; break;
+            case KEY_UP:    if (next_dir != 2) next_dir = 0; break;
+            case KEY_RIGHT: if (next_dir != 3) next_dir = 1; break;
+            case KEY_DOWN:  if (next_dir != 0) next_dir = 2; break;
+            case KEY_LEFT:  if (next_dir != 1) next_dir = 3; break;
             case 'q': endwin(); return 0;
         }
 
-        struct timespec sleep_time = { 0, 5000000 }; // 1 mil nano secs = 1 ms
-        nanosleep(&sleep_time, NULL);
+        // Dynamic Sleep Throttling Calculation
+        clock_gettime(CLOCK_MONOTONIC, &now);
 
+        struct timespec earliest = tasks[0].next_run;
+        for (int i = 1; i < task_count; i++) {
+            if (timespec_cmp(&tasks[i].next_run, &earliest) < 0) {
+                earliest = tasks[i].next_run;
+            }
+        }
+
+        struct timespec sleep_time;
+        sleep_time.tv_sec = earliest.tv_sec - now.tv_sec;
+        sleep_time.tv_nsec = earliest.tv_nsec - now.tv_nsec;
+
+        // Normalize underflows in nanoseconds
+        if (sleep_time.tv_nsec < 0) {
+            sleep_time.tv_sec -= 1;
+            sleep_time.tv_nsec += 1000000000;
+        }
+
+        // Only sleep if the next deadline resides in the future
+        if (sleep_time.tv_sec > 0 || (sleep_time.tv_sec == 0 && sleep_time.tv_nsec > 0)) {
+            nanosleep(&sleep_time, NULL);
+        }
     }
 
     endwin();
