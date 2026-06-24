@@ -10,7 +10,12 @@ int khret; // return value from kh_put calls - says if already exists
 MEVENT event;
 char *tmp = NULL;
 
+volatile sig_atomic_t shutdown_flag = 0;
 
+static void handle_sig(int signum)
+{
+    shutdown_flag = signum;
+}
 
 ///////////////////////////////////////////////////
 // startup and close down
@@ -182,9 +187,19 @@ clickwin get_window_click(int *row, int *col)
 
 int main(int argc, char *argv[]) 
 {
+struct sigaction sa;
+    sa.sa_handler = handle_sig;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+
+    sigaction(SIGINT, &sa, NULL);
+    sigaction(SIGQUIT, &sa, NULL);
+    sigaction(SIGTERM, &sa, NULL);
+/*
 signal(SIGINT, final_close);
 signal(SIGQUIT, final_close);
 signal(SIGTERM, final_close);
+*/
 
 	// Initial app setup
 	if(initial_setup(argc, argv)){
@@ -193,7 +208,7 @@ signal(SIGTERM, final_close);
 	
 		int ch = KEY_REFRESH; // doesn't trigger anything
 		// Main loop to handle input
-		while (ch != KEY_SEND) {
+		while (ch != KEY_SEND && !shutdown_flag) {
 			// if reresh, handle keys before we wait for another char
 			// used by multiple functions to force a screen refresh
 			if(ch == KEY_REFRESH) handle_global_keys(ch);
@@ -224,7 +239,7 @@ signal(SIGTERM, final_close);
 		fputs("File does not exist\n", stderr);
 	}
 	// tidy up
-	final_close(0);		
+	final_close(shutdown_flag);		
 	return 0;
 }
 
