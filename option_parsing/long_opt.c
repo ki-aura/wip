@@ -9,6 +9,9 @@
 // =========== TO COMPILE WITH DEMO MAIN CODE =========================
 // cc -o options_demo long_opt.c -DDEMO
 // -g -O0 -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wsign-conversion -Wcast-qual -fsanitize=address,undefined
+//
+// Sample Usage:
+// ./options_demo -q 2 -V -p "s" -e "d" -e "j" in da hous -d 3 -i --woo
 // ====================================================================
 
 #define _INCLUDE_INTERNAL_OPT_FUNCTIONS
@@ -343,6 +346,11 @@ int main(int argc, char *argv[]) {
     
     free_options(opts);
     return EXIT_SUCCESS;
+}
+#else
+
+int main(int argc, char *argv[]) {
+return EXIT_SUCCESS;
 }
 
 #endif
