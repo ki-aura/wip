@@ -50,7 +50,7 @@ static struct option long_options[] = {
 
 // ============ set SHORT options ===============
 //NOTE: short options that need an argument must be followed by a : & be consistent with longs
-const char short_options[] = "hvq:d:ip:e:V"; // nothing here for --woo as no short option
+static const char short_options[] = "hvq:d:ip:e:V"; // nothing here for --woo as no short option
   
 // ============ HELP FUNCTION ===================
 static void print_help(Options* opts, const char *prog_name, const char *const default_operand, bool operands_are_not_required) {
