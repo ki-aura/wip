@@ -5,6 +5,7 @@
 #include <unistd.h>
 #include <limits.h>
 
+
 #define DEFAULT_MAX_ITERATIONS 100
 #define CONVERGENCE_TOLERANCE 1e-15
 
